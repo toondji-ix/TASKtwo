@@ -1,0 +1,10 @@
+{
+  "goal_id": "supabase-paystack-commerce",
+  "status": "building",
+  "iteration": 1,
+  "builder_model": "GPT:5.6-Luna",
+  "inspector_model": "GPT:5.6-Sol",
+  "initial_sha": "a5837f39bfeced2d4c4a39f255ebc10eb7879df6",
+  "created_at": "2026-09-30T13:22:01.129+01:00",
+  "history": []
+}

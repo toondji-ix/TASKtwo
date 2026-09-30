@@ -1,11 +1,14 @@
 import {
-  PRODUCTS, STORAGE_KEY, accessAccount, addToCart, cartCount, cartTotal,
-  emptyState, findOrder, loadState, placeOrder, saveState, setCartQuantity,
-  toggleWishlist
+  LEGACY_STORAGE_KEY, PRODUCTS, addToCart, cartCount, cartTotalKobo, loadState,
+  saveState, setCartQuantity, toggleWishlist
 } from "./store.js";
+import {
+  createCheckout, getOrderByReference, getOrders, getProfile, getUser,
+  hasSession, signIn, signOut, signUp, updateProfile, verifyPayment
+} from "./backend.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
-const money = (amount) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(amount);
+const money = (kobo) => new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(kobo / 100);
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 })[character]);
@@ -17,9 +20,18 @@ let state = loadState(window.localStorage);
 let selectedCategory = "All";
 let wishlistOnly = false;
 let toastTimer;
+let accountUser = null;
+let accountProfile = null;
+let accountOrders = [];
+
+try {
+  saveState(window.localStorage, state);
+  window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+} catch {}
 
 function persist() {
   saveState(window.localStorage, state);
+  window.localStorage.removeItem(LEGACY_STORAGE_KEY);
   renderBadges();
 }
 
@@ -38,7 +50,7 @@ function productCard(product) {
       <button class="product-quick-add" data-action="add" data-id="${product.id}"><span>＋</span> Add to bag</button>
     </div>
     <div class="product-info">
-      <div class="product-name-row"><span class="product-name">${product.name}</span><span class="product-price">${money(product.price)}</span></div>
+      <div class="product-name-row"><span class="product-name">${product.name}</span><span class="product-price">${money(product.priceKobo)}</span></div>
       <p class="product-color">${product.color}</p>
     </div>
   </article>`;
@@ -61,7 +73,7 @@ function showToast(message) {
   toast.textContent = message;
   toast.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove("show"), 2300);
+  toastTimer = setTimeout(() => toast.classList.remove("show"), 3000);
 }
 
 function openDialog(markup) {
@@ -76,12 +88,12 @@ function closeDialog() {
   document.body.style.overflow = "";
 }
 
-function deliveryFee(subtotal) {
-  return subtotal >= 100 ? 0 : 8;
+function deliveryFee(subtotalKobo) {
+  return subtotalKobo >= 10000000 ? 0 : 800000;
 }
 
 function cartMarkup() {
-  const subtotal = cartTotal(state);
+  const subtotal = cartTotalKobo(state);
   if (!state.cart.length) return `<p class="eyebrow">YOUR EVERYDAY EDIT</p><h2 id="dialog-title">Your bag.</h2><div class="empty-cart">A little room for something lovely.<p>Your bag is waiting to be filled.</p></div><button class="dialog-action" data-action="continue">Explore the collection</button>`;
   const rows = state.cart.map(({ productId, quantity }) => {
     const product = PRODUCTS.find((entry) => entry.id === productId);
@@ -91,119 +103,188 @@ function cartMarkup() {
       <div><p class="cart-item-name">${product.name}</p><p class="cart-item-meta">${product.color}</p>
         <div class="stepper"><button data-action="quantity" data-id="${product.id}" data-quantity="${quantity - 1}" aria-label="Decrease ${product.name} quantity">−</button><span>${quantity}</span><button data-action="quantity" data-id="${product.id}" data-quantity="${quantity + 1}" aria-label="Increase ${product.name} quantity">＋</button></div>
         <button class="remove-item" data-action="remove" data-id="${product.id}">Remove</button>
-      </div><span class="cart-item-price">${money(product.price * quantity)}</span>
+      </div><span class="cart-item-price">${money(product.priceKobo * quantity)}</span>
     </article>`;
   }).join("");
   const shipping = deliveryFee(subtotal);
   return `<p class="eyebrow">YOUR EVERYDAY EDIT · ${cartCount(state)} ${cartCount(state) === 1 ? "PIECE" : "PIECES"}</p><h2 id="dialog-title">Your bag.</h2>
     <div class="cart-list">${rows}</div>
-    <p class="shipping-note">${shipping ? `Add ${money(100 - subtotal)} for complimentary delivery.` : "Complimentary delivery on this order."}</p>
+    <p class="shipping-note">${shipping ? `Add ${money(10000000 - subtotal)} for complimentary delivery.` : "Complimentary delivery on this order."}</p>
     <div class="summary-row"><span>Subtotal</span><span>${money(subtotal)}</span></div>
     <div class="summary-row"><span>Delivery</span><span>${shipping ? money(shipping) : "Complimentary"}</span></div>
     <div class="summary-row summary-total"><span>Total</span><span>${money(subtotal + shipping)}</span></div>
     <button class="dialog-action" data-action="checkout">Continue to checkout</button>
-    <p class="form-hint">Demo checkout only. No payment information is collected and no payment is processed.</p>`;
+    <p class="form-hint">Payment is securely completed through Paystack. Your final total is calculated on the server.</p>`;
 }
 
 function openCart() {
   openDialog(cartMarkup());
 }
 
-function accountMarkup(message = "") {
-  const account = state.accounts.find((entry) => entry.email === state.currentEmail);
-  if (account) {
-    const orders = state.orders.filter((order) => order.email === account.email);
-    const orderMarkup = orders.length ? `<div class="order-list">${orders.map((order) => `<div class="order-entry"><div><strong>${escapeHtml(order.id)}</strong><p>${new Date(order.createdAt).toLocaleDateString()} · ${money(order.total)}</p></div><button class="mini-button" data-action="track-order" data-id="${escapeHtml(order.id)}">Track order</button></div>`).join("")}</div>` : `<p class="form-hint">Your placed orders will find a home here.</p>`;
-    return `<p class="eyebrow">YOUR LITTLE CORNER</p><h2 id="dialog-title">Hello, ${escapeHtml(account.name.split(" ")[0])}.</h2>
-      <div class="account-card"><strong>${escapeHtml(account.name)}</strong><p>${escapeHtml(account.email)}</p><p>Demo account · saved only in this browser</p></div>
-      <h3 class="eyebrow">YOUR ORDERS</h3>${orderMarkup}
-      <button class="text-action" data-action="signout">Sign out of this demo account</button>
-      ${message ? `<p class="form-error">${message}</p>` : ""}`;
+function accountMarkup(message = "", mode = "signup") {
+  if (!hasSession()) {
+    const signup = mode === "signup";
+    return `<p class="eyebrow">A PLACE OF YOUR OWN</p><h2 id="dialog-title">Your account.</h2>
+      <p class="dialog-intro">Sign in securely to save your profile and see your orders. Account access is powered by Supabase.</p>
+      <form id="account-form" data-mode="${signup ? "signup" : "signin"}"><div class="form-grid">
+        ${signup ? `<div class="form-field full"><label for="account-name">Your name *</label><input id="account-name" name="name" autocomplete="name" required minlength="2"></div>` : ""}
+        <div class="form-field full"><label for="account-email">Email address *</label><input id="account-email" name="email" type="email" autocomplete="email" required></div>
+        <div class="form-field full"><label for="account-password">Password *</label><input id="account-password" name="password" type="password" autocomplete="${signup ? "new-password" : "current-password"}" minlength="8" required></div>
+      </div><p class="form-error" id="account-error">${escapeHtml(message)}</p>
+      <button class="dialog-action" type="submit">${signup ? "Create account" : "Sign in"}</button>
+      </form><button class="text-action" data-action="auth-mode" data-mode="${signup ? "signin" : "signup"}">${signup ? "I already have an account" : "Create a new account"}</button>
+      <p class="form-hint">Use the same email and password that you registered with. If email confirmation is enabled, confirm the link before signing in.</p>`;
   }
-  return `<p class="eyebrow">A PLACE OF YOUR OWN</p><h2 id="dialog-title">Your account.</h2>
-    <p class="dialog-intro">Save your favorite things and find your orders in one place. This is a demo account stored on this device, not a secure login.</p>
-    <form id="account-form"><div class="form-grid">
-      <div class="form-field full"><label for="account-email">Email address</label><input id="account-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required></div>
-      <div class="form-field full"><label for="account-name">Your name <span>(for a new account)</span></label><input id="account-name" name="name" autocomplete="name" placeholder="June Smith"></div>
-    </div><p class="form-error" id="account-error">${message}</p>
-    <button class="dialog-action" type="submit" data-mode="create">Create a demo account</button>
-    <button class="text-action" type="submit" data-mode="access">I already have a demo account</button>
-    </form><p class="form-hint">For an existing account, enter its email above and choose “I already have a demo account.” No password or identity check is used.</p>`;
+  const name = accountProfile?.full_name || accountUser?.email || "there";
+  const orders = accountOrders.length ? `<div class="order-list">${accountOrders.map((order) => `<div class="order-entry"><div><strong>${escapeHtml(order.reference)}</strong><p>${new Date(order.created_at).toLocaleDateString()} · ${money(order.amount_kobo)} · ${paymentLabel(order.payment_status)}</p></div><button class="mini-button" data-action="track-order" data-id="${escapeHtml(order.reference)}">View order</button></div>`).join("")}</div>` : `<p class="form-hint">Your orders will appear here after checkout.</p>`;
+  return `<p class="eyebrow">YOUR LITTLE CORNER</p><h2 id="dialog-title">Hello, ${escapeHtml(name.split(" ")[0])}.</h2>
+    <div class="account-card"><strong>${escapeHtml(accountUser?.email || "")}</strong><p>Signed in with Supabase Auth</p></div>
+    <h3 class="eyebrow">DELIVERY DETAILS</h3>
+    <form id="profile-form"><div class="form-grid">
+      <div class="form-field full"><label for="profile-name">Full name *</label><input id="profile-name" name="full_name" value="${escapeHtml(accountProfile?.full_name || "")}" autocomplete="name" required></div>
+      <div class="form-field full"><label for="profile-address">Street address *</label><input id="profile-address" name="address" value="${escapeHtml(accountProfile?.address || "")}" autocomplete="street-address" required></div>
+      <div class="form-field"><label for="profile-city">City *</label><input id="profile-city" name="city" value="${escapeHtml(accountProfile?.city || "")}" autocomplete="address-level2" required></div>
+      <div class="form-field"><label for="profile-postal">Postal code *</label><input id="profile-postal" name="postal_code" value="${escapeHtml(accountProfile?.postal_code || "")}" autocomplete="postal-code" required></div>
+      <div class="form-field full"><label for="profile-country">Country / region *</label><input id="profile-country" name="country" value="${escapeHtml(accountProfile?.country || "")}" autocomplete="country-name" required></div>
+    </div><p class="form-error" id="profile-error">${escapeHtml(message)}</p><button class="dialog-action" type="submit">Save delivery details</button></form>
+    <h3 class="eyebrow">YOUR ORDERS</h3>${orders}
+    <button class="text-action" data-action="signout">Sign out</button>`;
 }
 
-function openAccount(message = "") {
-  openDialog(accountMarkup(message));
+async function openAccount(message = "", mode = "signup") {
+  if (!hasSession()) return openDialog(accountMarkup(message, mode));
+  openDialog(`<p class="eyebrow">YOUR LITTLE CORNER</p><h2 id="dialog-title">Loading your account…</h2><p class="form-hint">Connecting securely to your account and orders.</p>`);
+  try {
+    [accountUser, accountProfile, accountOrders] = await Promise.all([getUser(), getProfile(), getOrders()]);
+    openDialog(accountMarkup(message));
+  } catch (error) {
+    if (!hasSession()) return openDialog(accountMarkup(error.message, "signin"));
+    openDialog(`<p class="eyebrow">ACCOUNT CONNECTION</p><h2 id="dialog-title">Couldn’t load your account.</h2><p class="form-error">${escapeHtml(error.message)}</p><button class="dialog-action" data-action="account-retry">Try again</button>`);
+  }
 }
 
 function checkoutMarkup() {
-  const account = state.accounts.find((entry) => entry.email === state.currentEmail);
-  const subtotal = cartTotal(state);
+  const subtotal = cartTotalKobo(state);
   const shipping = deliveryFee(subtotal);
   return `<p class="eyebrow">A FEW DETAILS AND YOU’RE DONE</p><h2 id="dialog-title">Your delivery.</h2>
-    <p class="dialog-intro">A simulated checkout for your ${cartCount(state) === 1 ? "piece" : "pieces"}. No payment details are requested or processed.</p>
+    <p class="dialog-intro">We’ll save your delivery details to your Supabase profile. Prices are in Nigerian naira (NGN); payment is confirmed by Paystack.</p>
     <form id="checkout-form"><div class="form-grid">
-      <div class="form-field full"><label for="checkout-name">Full name *</label><input id="checkout-name" name="name" autocomplete="name" value="${escapeHtml(account?.name ?? "")}" required></div>
-      <div class="form-field full"><label for="checkout-email">Email address *</label><input id="checkout-email" name="email" type="email" autocomplete="email" value="${escapeHtml(account?.email ?? "")}" required></div>
-      <div class="form-field full"><label for="checkout-address">Street address *</label><input id="checkout-address" name="address" autocomplete="street-address" required></div>
-      <div class="form-field"><label for="checkout-city">City *</label><input id="checkout-city" name="city" autocomplete="address-level2" required></div>
-      <div class="form-field"><label for="checkout-postal">Postal code *</label><input id="checkout-postal" name="postal" autocomplete="postal-code" required></div>
-      <div class="form-field full"><label for="checkout-country">Country / region *</label><select id="checkout-country" name="country" autocomplete="country-name" required><option value="">Choose a country</option><option>United States</option><option>Canada</option><option>United Kingdom</option><option>Australia</option><option>France</option><option>Germany</option><option>Other</option></select></div>
+      <div class="form-field full"><label for="checkout-name">Full name *</label><input id="checkout-name" name="full_name" autocomplete="name" value="${escapeHtml(accountProfile?.full_name || "")}" required></div>
+      <div class="form-field full"><label>Email address</label><input value="${escapeHtml(accountUser?.email || "")}" disabled></div>
+      <div class="form-field full"><label for="checkout-address">Street address *</label><input id="checkout-address" name="address" autocomplete="street-address" value="${escapeHtml(accountProfile?.address || "")}" required></div>
+      <div class="form-field"><label for="checkout-city">City *</label><input id="checkout-city" name="city" autocomplete="address-level2" value="${escapeHtml(accountProfile?.city || "")}" required></div>
+      <div class="form-field"><label for="checkout-postal">Postal code *</label><input id="checkout-postal" name="postal_code" autocomplete="postal-code" value="${escapeHtml(accountProfile?.postal_code || "")}" required></div>
+      <div class="form-field full"><label for="checkout-country">Country / region *</label><input id="checkout-country" name="country" autocomplete="country-name" value="${escapeHtml(accountProfile?.country || "")}" required></div>
     </div><p class="form-error" id="checkout-error"></p>
     <div class="summary-row" style="margin-top:18px"><span>Items</span><span>${money(subtotal)}</span></div>
     <div class="summary-row"><span>Delivery</span><span>${shipping ? money(shipping) : "Complimentary"}</span></div>
-    <div class="summary-row summary-total"><span>Total · simulated</span><span>${money(subtotal + shipping)}</span></div>
-    <button class="dialog-action" type="submit">Place demo order</button>
-    </form><p class="form-hint">No card details or payment credentials are collected. Delivery and all order progress are simulated for this storefront demo.</p>`;
+    <div class="summary-row summary-total"><span>Estimated total</span><span>${money(subtotal + shipping)}</span></div>
+    <button class="dialog-action" type="submit">Continue to secure payment</button>
+    </form><p class="form-hint">The payment total is recomputed from the server catalog. No card details enter this storefront.</p>`;
 }
 
-function openCheckout() {
+async function openCheckout() {
   if (!state.cart.length) return openCart();
-  openDialog(checkoutMarkup());
-  $("#checkout-name").focus();
+  if (!hasSession()) return openAccount("Sign in or create an account before checkout.", "signin");
+  try {
+    [accountUser, accountProfile] = await Promise.all([getUser(), getProfile()]);
+    openDialog(checkoutMarkup());
+    $("#checkout-name").focus();
+  } catch (error) {
+    openDialog(`<p class="eyebrow">CHECKOUT SETUP</p><h2 id="dialog-title">A quick account check is needed.</h2><p class="form-error">${escapeHtml(error.message)}</p><button class="dialog-action" data-action="account-retry">Open account</button>`);
+  }
 }
 
-function trackingStage(order) {
-  const elapsed = Date.now() - new Date(order.createdAt).getTime();
-  if (elapsed >= 40_000) return 2;
-  if (elapsed >= 12_000) return 1;
-  return 0;
+function paymentLabel(status) {
+  return ({
+    pending: "Payment pending",
+    paid: "Payment confirmed",
+    failed: "Payment failed",
+    cancelled: "Payment cancelled"
+  })[status] || "Payment pending";
 }
 
 function trackingResultMarkup(order) {
-  const stage = trackingStage(order);
-  const steps = ["Order received", "Preparing your parcel", "On its way"];
-  const items = order.items.map((item) => {
-    const product = PRODUCTS.find((entry) => entry.id === item.productId);
-    return product ? `${product.name} × ${item.quantity}` : "";
-  }).filter(Boolean).join(" · ");
-  return `<div class="tracking-card"><h3>${steps[stage]}</h3><p>Order ${escapeHtml(order.id)} · placed ${new Date(order.createdAt).toLocaleDateString()} · ${money(order.total)} total</p>
-    <div class="progress-track" aria-label="Simulated delivery progress">${steps.map((step, index) => `<div class="progress-step${index <= stage ? " complete" : ""}">${step}</div>`).join("")}</div>
-    <p class="order-items">${items}<br>Delivery progress is illustrative only. No parcel has been booked or shipped.</p>
+  const items = (order.order_items || []).map((item) =>
+    `${escapeHtml(item.product_name)} × ${item.quantity}`
+  ).join(" · ");
+  return `<div class="tracking-card"><h3>${paymentLabel(order.payment_status)}</h3><p>Order ${escapeHtml(order.reference)} · placed ${new Date(order.created_at).toLocaleDateString()} · ${money(order.amount_kobo)} total</p>
+    <div class="progress-track" aria-label="Payment status"><div class="progress-step complete">Order created</div><div class="progress-step${order.payment_status === "paid" ? " complete" : ""}">${paymentLabel(order.payment_status)}</div></div>
+    <p class="order-items">${items}<br>Payment is confirmed only after server-side Paystack verification. Shipping is not connected.</p>
   </div>`;
 }
 
-function trackMarkup(orderId = "") {
-  const result = orderId ? findOrder(state, orderId) : null;
+function trackMarkup(orderId = "", order = null, message = "") {
   return `<p class="eyebrow">A LITTLE REASSURANCE</p><h2 id="dialog-title">Order tracking.</h2>
-    <p class="dialog-intro">Enter the reference from your demo order. There’s no real shipment behind this simulated tracking.</p>
+    <p class="dialog-intro">Your order and payment status come from your authenticated account. Sign in with the account used at checkout.</p>
     <form class="track-form" id="track-form"><label class="visually-hidden" for="track-id">Order reference</label><input id="track-id" name="orderId" placeholder="AJ-…" value="${escapeHtml(orderId)}" required><button type="submit">Find my order</button></form>
-    <p class="form-error" id="tracking-error"></p>
-    ${result ? trackingResultMarkup(result) : orderId ? `<p class="form-error">We couldn’t find that order. Check the reference and try again.</p>` : ""}
-    ${state.orders.length && !orderId ? `<p class="form-hint">Recent demo references: ${state.orders.slice(0, 3).map((order) => `<button class="text-action" style="display:inline;margin:0 5px" data-action="track-order" data-id="${escapeHtml(order.id)}">${escapeHtml(order.id)}</button>`).join("")}</p>` : ""}`;
+    <p class="form-error" id="tracking-error">${escapeHtml(message)}</p>
+    ${order ? trackingResultMarkup(order) : ""}
+    ${hasSession() && !orderId ? `<p class="form-hint">Recent orders are available from your account.</p>` : ""}`;
 }
 
-function openTracking(orderId = "") {
-  openDialog(trackMarkup(orderId));
+async function openTracking(orderId = "", message = "") {
+  if (!hasSession()) return openAccount("Sign in to view orders belonging to your account.", "signin");
+  openDialog(`<p class="eyebrow">A LITTLE REASSURANCE</p><h2 id="dialog-title">Loading order…</h2>`);
+  if (!orderId) return openDialog(trackMarkup("", null, message));
+  try {
+    const order = await getOrderByReference(orderId.trim());
+    openDialog(trackMarkup(orderId, order, order ? message : "We couldn’t find that order in your account. Check the reference and try again."));
+  } catch (error) {
+    openDialog(trackMarkup(orderId, null, error.message));
+  }
 }
 
-document.addEventListener("click", (event) => {
+function renderPaymentResult(status, reference, error = "") {
+  const heading = status === "paid" ? "Payment confirmed." :
+    status === "failed" ? "Payment wasn’t completed." :
+      status === "cancelled" ? "Checkout was cancelled." : "Payment is still pending.";
+  const description = error || (status === "paid"
+    ? "Paystack confirmed this payment with our server. Your order is saved in your account."
+    : status === "failed"
+      ? "Paystack reported an unsuccessful payment. You can review this order in your account."
+      : status === "cancelled"
+        ? "No payment confirmation was received. The order remains pending unless Paystack verifies a payment."
+        : "We could not confirm a final payment result yet. Check again from your account; a redirect alone never marks an order paid.");
+  openDialog(`<p class="eyebrow">PAYSTACK CHECKOUT</p><h2 id="dialog-title">${heading}</h2><p class="dialog-intro">${escapeHtml(description)}</p>
+    ${reference ? `<div class="account-card"><strong>Order reference</strong><p>${escapeHtml(reference)}</p></div>` : ""}
+    <button class="dialog-action" data-action="account">View my account and orders</button><button class="text-action" data-action="track-order" data-id="${escapeHtml(reference || "")}">View this order</button>`);
+}
+
+async function handlePaymentReturn() {
+  const url = new URL(window.location.href);
+  const payment = url.searchParams.get("payment");
+  if (!payment) return;
+  const reference = url.searchParams.get("reference") || url.searchParams.get("trxref") || "";
+  url.searchParams.delete("payment");
+  url.searchParams.delete("reference");
+  url.searchParams.delete("trxref");
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  if (!reference) return renderPaymentResult("pending", "", "No transaction reference was returned. Check your account before trying again.");
+  if (!hasSession()) return renderPaymentResult("pending", reference, "Sign in to the account used for checkout to verify this payment.");
+  if (payment !== "return") return renderPaymentResult("cancelled", reference);
+  try {
+    const result = await verifyPayment(reference);
+    if (result.payment_status === "paid") {
+      state.cart = [];
+      persist();
+    }
+    renderPaymentResult(result.payment_status, reference);
+  } catch (error) {
+    renderPaymentResult("pending", reference, error.message);
+  }
+}
+
+document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-action]");
   if (button) {
     const { action, id } = button.dataset;
     if (action === "close") closeDialog();
     if (action === "cart") openCart();
-    if (action === "account") openAccount();
-    if (action === "track") openTracking();
+    if (action === "account") await openAccount();
+    if (action === "account-retry") await openAccount();
+    if (action === "auth-mode") openDialog(accountMarkup("", button.dataset.mode));
+    if (action === "track") await openTracking();
     if (action === "wishlist") {
       wishlistOnly = true;
       selectedCategory = "All";
@@ -218,31 +299,45 @@ document.addEventListener("click", (event) => {
       showToast(state.wishlist.includes(id) ? "Saved for another day." : "Removed from your saved things.");
     }
     if (action === "add") {
-      addToCart(state, id);
-      persist();
-      showToast("A lovely choice. Added to your bag.");
+      try {
+        addToCart(state, id);
+        persist();
+        showToast("A lovely choice. Added to your bag.");
+      } catch (error) {
+        showToast(error.message);
+      }
     }
     if (action === "quantity") {
-      setCartQuantity(state, id, Number(button.dataset.quantity));
-      persist();
-      openCart();
+      try {
+        setCartQuantity(state, id, Number(button.dataset.quantity));
+        persist();
+        openCart();
+      } catch (error) {
+        showToast(error.message);
+      }
     }
     if (action === "remove") {
       setCartQuantity(state, id, 0);
       persist();
       openCart();
     }
-    if (action === "checkout") openCheckout();
+    if (action === "checkout") await openCheckout();
     if (action === "continue") {
       closeDialog();
       $("#shop").scrollIntoView({ behavior: "smooth" });
     }
     if (action === "signout") {
-      state.currentEmail = "";
-      persist();
-      openAccount();
+      try {
+        await signOut();
+      } catch (error) {
+        showToast(`Signed out locally. ${error.message}`);
+      }
+      accountUser = null;
+      accountProfile = null;
+      accountOrders = [];
+      await openAccount();
     }
-    if (action === "track-order") openTracking(id);
+    if (action === "track-order" && id) await openTracking(id);
   }
   const category = event.target.closest("[data-category]");
   if (category) {
@@ -253,42 +348,72 @@ document.addEventListener("click", (event) => {
   if (event.target === overlay) closeDialog();
 });
 
-document.addEventListener("submit", (event) => {
+document.addEventListener("submit", async (event) => {
   if (event.target.id === "account-form") {
     event.preventDefault();
-    const submitter = event.submitter;
-    const form = new FormData(event.target);
-    const email = form.get("email");
-    const name = form.get("name");
+    const formElement = event.target;
+    const form = new FormData(formElement);
+    const mode = formElement.dataset.mode;
+    const errorElement = $("#account-error");
+    errorElement.textContent = "";
     try {
-      if (submitter?.dataset.mode === "access" && !state.accounts.some((account) => account.email === String(email).trim().toLowerCase())) {
-        throw new Error("No demo account uses that email yet. Add your name to create one.");
+      if (mode === "signup") {
+        const result = await signUp(String(form.get("email")).trim(), String(form.get("password")), String(form.get("name")).trim());
+        if (result.access_token) {
+          await openAccount();
+          showToast("Your Supabase account is ready.");
+        } else {
+          openAccount("Check your email for a confirmation link, then sign in.", "signin");
+        }
+      } else {
+        await signIn(String(form.get("email")).trim(), String(form.get("password")));
+        await openAccount();
+        showToast("You’re signed in.");
       }
-      const result = accessAccount(state, { name: submitter?.dataset.mode === "access" ? "" : name, email });
-      state = result.state;
-      persist();
-      openAccount();
-      showToast(result.created ? "Your demo account is ready." : "Welcome back to your demo account.");
     } catch (error) {
-      $("#account-error").textContent = error.message;
+      errorElement.textContent = error.message;
+    }
+  }
+  if (event.target.id === "profile-form") {
+    event.preventDefault();
+    const form = Object.fromEntries(new FormData(event.target).entries());
+    const errorElement = $("#profile-error");
+    errorElement.textContent = "";
+    try {
+      accountProfile = await updateProfile({ ...accountProfile, ...form });
+      accountOrders = await getOrders();
+      openDialog(accountMarkup("Delivery details saved."));
+      showToast("Your delivery details were saved.");
+    } catch (error) {
+      errorElement.textContent = error.message;
     }
   }
   if (event.target.id === "checkout-form") {
     event.preventDefault();
+    const button = event.target.querySelector('button[type="submit"]');
     const details = Object.fromEntries(new FormData(event.target).entries());
+    const errorElement = $("#checkout-error");
+    errorElement.textContent = "";
+    button.disabled = true;
+    button.textContent = "Preparing secure checkout…";
     try {
-      const order = placeOrder(state, details, () => `AJ-${Math.random().toString(36).slice(2, 8).toUpperCase()}`);
-      persist();
-      openDialog(`<p class="eyebrow">THANK YOU · YOUR DEMO ORDER IS IN</p><h2 id="dialog-title">A good thing is coming.</h2><p class="dialog-intro">Your order has been saved in this browser. No payment was taken and no delivery was booked.</p>${trackingResultMarkup(order)}<div class="account-card"><strong>Your reference</strong><p>${order.id} · keep this to look up your order later.</p></div><button class="dialog-action" data-action="track-order" data-id="${order.id}">View order tracking</button><button class="text-action" data-action="account">Find this order in your demo account</button>`);
-      showToast("Your simulated order is all set.");
+      accountProfile = await updateProfile({ ...accountProfile, ...details });
+      const items = state.cart.map(({ productId, quantity }) => ({ productId, quantity }));
+      const result = await createCheckout(items);
+      if (!/^https:\/\/checkout\.paystack\.com\//i.test(result.authorization_url || "")) {
+        throw new Error("Paystack returned an unexpected checkout URL. No redirect was made.");
+      }
+      window.location.assign(result.authorization_url);
     } catch (error) {
-      $("#checkout-error").textContent = error.message;
+      errorElement.textContent = error.message;
+      button.disabled = false;
+      button.textContent = "Continue to secure payment";
     }
   }
   if (event.target.id === "track-form") {
     event.preventDefault();
     const orderId = new FormData(event.target).get("orderId");
-    openTracking(String(orderId).trim());
+    await openTracking(String(orderId).trim());
   }
   if (event.target.id === "newsletter-form") {
     event.preventDefault();
@@ -316,3 +441,4 @@ $("#product-search").addEventListener("input", renderProducts);
 $("#year").textContent = new Date().getFullYear();
 renderBadges();
 renderProducts();
+handlePaymentReturn();

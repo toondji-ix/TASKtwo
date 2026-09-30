@@ -6,6 +6,6 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "check": "node --check src/store.js && node --check src/app.js && node --check server.js && node --test"
+    "check": "node --check src/store.js && node --check src/backend.js && node --check src/app.js && node --check server.js && node --check supabase/functions/_shared/payment.js && node --test"
   }
 }
