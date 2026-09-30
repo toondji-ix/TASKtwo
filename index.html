@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f6f5f0">
+    <meta name="description" content="Discover considered bags, jewelry, and sunglasses at Atelier June.">
+    <title>Atelier June — Objects to keep</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <script type="module" src="src/app.js"></script>
+  </head>
+  <body>
+    <div class="announcement">A little something for you — complimentary delivery on orders over $100</div>
+    <header class="site-header">
+      <a class="wordmark" href="#" aria-label="Atelier June home">atelier <span>june</span><i>®</i></a>
+      <nav class="main-nav" aria-label="Main navigation">
+        <a href="#shop" data-category="All">Shop all</a>
+        <a href="#shop" data-category="Bags">Bags</a>
+        <a href="#shop" data-category="Jewelry">Jewelry</a>
+        <a href="#shop" data-category="Sunglasses">Sunglasses</a>
+        <button class="nav-link" data-action="track">Order tracking</button>
+      </nav>
+      <div class="header-actions">
+        <button class="icon-button account-button" data-action="account" aria-label="Your account"><span class="account-label">Account</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.6-3.5 3.1-5.3 7-5.3s6.4 1.8 7 5.3"/></svg></button>
+        <button class="icon-button" data-action="wishlist" aria-label="Your wishlist"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.2 8.7c0 4.1-8.2 10-8.2 10s-8.2-5.9-8.2-10a4.2 4.2 0 0 1 8.2-1.3 4.2 4.2 0 0 1 8.2 1.3Z"/></svg><span class="count-badge" id="wishlist-count">0</span></button>
+        <button class="icon-button" data-action="cart" aria-label="Your shopping bag"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14l1 12H4L5 8Z"/><path d="M9 9V6a3 3 0 0 1 6 0v3"/></svg><span class="count-badge" id="cart-count">0</span></button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">A considered collection · No. 04</p>
+          <h1>Objects to<br><em>keep.</em></h1>
+          <p class="hero-intro">Everyday pieces, thoughtfully found. Made to go places, and stay with you.</p>
+          <a class="button button-dark" href="#shop">Explore the collection <span aria-hidden="true">↗</span></a>
+          <div class="hero-note"><span class="note-line"></span> An independent edit of things we love.</div>
+        </div>
+        <div class="hero-image" role="img" aria-label="A sculptural leather bag, styled in soft afternoon light">
+          <div class="image-caption"><span>THE EVERYDAY EDIT</span><span>01 — 08</span></div>
+          <div class="image-mark">AJ<br><span>STUDIO</span></div>
+        </div>
+        <span class="hero-index">EST. MMXXIV &nbsp;·&nbsp; 40° 42' N</span>
+      </section>
+
+      <section class="ticker" aria-label="Atelier June values"><span>GOOD THINGS, CHOSEN SLOWLY</span><i>✳</i><span>INDEPENDENTLY SOURCED</span><i>✳</i><span>MADE FOR EVERY DAY</span><i>✳</i><span>GOOD THINGS, CHOSEN SLOWLY</span></section>
+
+      <section class="collection-section" id="shop">
+        <div class="section-heading">
+          <div><p class="eyebrow">THE JUNE SELECTION</p><h2 id="collection-title">A few good things.</h2></div>
+          <p class="section-aside">The pieces we reach for,<br>again and again.</p>
+        </div>
+        <div class="shop-tools">
+          <div class="filters" aria-label="Filter products">
+            <button class="filter-chip active" data-category="All">All pieces <span>08</span></button>
+            <button class="filter-chip" data-category="Bags">Bags</button>
+            <button class="filter-chip" data-category="Jewelry">Jewelry</button>
+            <button class="filter-chip" data-category="Sunglasses">Sunglasses</button>
+          </div>
+          <label class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4 4"/></svg><input id="product-search" type="search" placeholder="Find something..." aria-label="Search products"></label>
+        </div>
+        <div class="product-grid" id="product-grid" aria-live="polite"></div>
+        <div class="empty-state" id="empty-products" hidden>Nothing here just yet. Try another search or category.</div>
+      </section>
+
+      <section class="manifesto">
+        <div class="manifesto-image" role="img" aria-label="An artful collection of everyday objects"></div>
+        <div class="manifesto-copy"><p class="eyebrow">A NOTE FROM JUNE</p><h2>Fewer things.<br><em>More feeling.</em></h2><p>We believe the best things aren’t the loudest. They’re the bag that softens with age, the earrings you forget to take off, the frames that somehow go with everything.</p><p>Each piece is picked with care, made to earn its place in your everyday.</p><span class="signature">With love, June</span><a class="text-link" href="#shop">Meet your next favorite <span>↗</span></a></div>
+      </section>
+
+      <section class="newsletter">
+        <p class="eyebrow">LETTERS FROM THE STUDIO</p><h2>A good thing in your inbox.</h2><p>Little notes, new finds, and the occasional love letter.</p>
+        <form id="newsletter-form"><label class="visually-hidden" for="newsletter-email">Email address</label><input type="email" id="newsletter-email" placeholder="Your email address" required><button type="submit" aria-label="Subscribe to the newsletter">Sign me up <span>↗</span></button></form>
+        <p class="newsletter-note">By signing up, you agree to receive the occasional email. Unsubscribe whenever.</p>
+      </section>
+    </main>
+    <footer class="site-footer"><a class="wordmark" href="#">atelier <span>june</span><i>®</i></a><span>Good things, chosen slowly. &copy; <span id="year"></span> Atelier June.</span><button data-action="track">Track an order <span>↗</span></button><span class="prototype-note">Independent demo storefront · payments &amp; delivery are simulated</span></footer>
+
+    <div class="overlay" id="overlay" hidden>
+      <section class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" tabindex="-1">
+        <button class="dialog-close" data-action="close" aria-label="Close">×</button>
+        <div id="dialog-content"></div>
+      </section>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
