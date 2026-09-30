@@ -41,7 +41,12 @@ These two values are public browser configuration. **Never put a Supabase servic
    ```
 
    The migration creates the seeded NGN catalog, customer profiles, order/payment records and line items. Row Level Security restricts profiles and orders to their owner. Customers can update only their profile; they cannot create orders, edit order items, or change payment status.
+
+   If you are not using the Supabase CLI, open **Dashboard → SQL Editor**, create a new query, paste the complete contents of `supabase/migrations/20260930000000_commerce.sql`, and run it once against this project. The storefront requires all four migration tables (`profiles`, `products`, `orders`, and `order_items`); confirming an email creates the Auth user but does not apply this database migration. If the tables already exist but PostgREST still reports a schema-cache error, run `notify pgrst, 'reload schema';` in the SQL Editor and retry.
+
 3. In the Supabase dashboard, configure Auth email/password sign-up and the email confirmation and site/redirect URLs you want. Add your storefront origin (for local use, `http://127.0.0.1:4173`) to the Auth redirect allow list. The profile trigger creates a profile at sign-up. Users must sign in and complete their delivery details before checking out.
+
+   If an account created before the commerce migration signs in but reports that its profile is missing, apply `supabase/migrations/20260930000001_backfill_customer_profiles.sql` in the SQL Editor. This safely creates profiles only for existing Auth users whose profile row is absent; it can be run more than once. Then sign out and sign back in. If the profile is still unavailable, verify the profile trigger and owner-scoped profile policies from the commerce migration.
 
 ## Paystack Edge Functions and secrets
 
@@ -62,6 +67,8 @@ supabase functions deploy create-checkout
 supabase functions deploy verify-payment
 supabase functions deploy paystack-webhook
 ```
+
+If checkout displays **Failed to fetch** or reports that the function was not found, confirm that the CLI is linked to the same project URL as `src/config.js`, set `PAYSTACK_SECRET_KEY` and `SITE_URL` in that project, deploy `create-checkout`, and reload the storefront. Function invocations must be available from the browser origin; the function includes the required CORS handling.
 
 In Paystack Dashboard, stay in **Test Mode** and configure the webhook URL:
 

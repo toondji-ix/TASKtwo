@@ -2,6 +2,13 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./config.js";
 
 const SESSION_KEY = "atelier-june-supabase-session-v1";
 
+export function supabaseErrorMessage(data, status) {
+  if (data?.code === "PGRST205") {
+    return "The Supabase commerce database is not installed. Apply supabase/migrations/20260930000000_commerce.sql to this project in the Supabase SQL Editor, then reload and try again.";
+  }
+  return data?.msg || data?.message || data?.error_description || data?.error || `Supabase request failed (${status}).`;
+}
+
 function configured() {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     throw new Error("Supabase is not configured. Add your project URL and publishable/anon key to src/config.js, then reload.");
@@ -36,8 +43,7 @@ async function request(path, { method = "GET", body, token, headers = {} } = {})
   });
   const data = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    const message = data?.msg || data?.message || data?.error_description || data?.error || `Supabase request failed (${response.status}).`;
-    throw new Error(message);
+    throw new Error(supabaseErrorMessage(data, response.status));
   }
   return data;
 }
@@ -100,7 +106,9 @@ export async function getUser() {
 export async function getProfile() {
   const token = await currentToken();
   const rows = await request("/rest/v1/profiles?select=id,full_name,address,city,postal_code,country", { token });
-  if (!rows?.[0]) throw new Error("Your profile is not ready yet. Sign out and back in, or check the profile trigger migration.");
+  if (!rows?.[0]) {
+    throw new Error("Your customer profile is missing. Apply supabase/migrations/20260930000001_backfill_customer_profiles.sql in the Supabase SQL Editor, then sign out and back in. If it still fails, check the profile trigger and owner-scoped profile policy from the commerce migration.");
+  }
   return rows[0];
 }
 
@@ -129,7 +137,17 @@ export async function getOrders() {
 
 export async function createCheckout(items) {
   const token = await currentToken();
-  return request("/functions/v1/create-checkout", { method: "POST", token, body: { items } });
+  try {
+    return await request("/functions/v1/create-checkout", { method: "POST", token, body: { items } });
+  } catch (error) {
+    if (error instanceof TypeError && /fetch/i.test(error.message)) {
+      throw new Error("The secure checkout service is unavailable. Deploy the Supabase create-checkout function and configure its PAYSTACK_SECRET_KEY and SITE_URL secrets, then try again.");
+    }
+    if (error.message === "Requested function was not found") {
+      throw new Error("The secure checkout function is not deployed to this Supabase project. Deploy supabase/functions/create-checkout, configure its PAYSTACK_SECRET_KEY and SITE_URL secrets, then try again.");
+    }
+    throw error;
+  }
 }
 
 export async function verifyPayment(reference) {
