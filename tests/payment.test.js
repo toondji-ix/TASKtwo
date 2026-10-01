@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import {
-  nextPaymentStatus, paymentStatusFromTransaction, transactionMatchesOrder,
+  nextPaymentStatus, paymentStatusFromTransaction, paymentVerificationResponse, transactionMatchesOrder,
   validateCart, validateTransaction, verifyWebhookSignature
 } from "../supabase/functions/_shared/payment.js";
 import { orderConfirmationMessage } from "../supabase/functions/_shared/mailgun.js";
@@ -54,6 +54,39 @@ test("payment state transitions are idempotent and cannot downgrade a paid order
   assert.throws(() => nextPaymentStatus("pending", "pending"), /Unknown requested/);
   assert.equal(paymentStatusFromTransaction({ status: "abandoned" }), "cancelled");
   assert.equal(paymentStatusFromTransaction({ status: "processing" }), "pending");
+});
+
+test("payment verification response preserves receipt dispatch status", () => {
+  const reference = "AJ-order";
+  const order = { payment_status: "pending" };
+  const transaction = { status: "success" };
+
+  assert.deepEqual(paymentVerificationResponse(reference, order, {
+    payment_status: "paid",
+    confirmation_email_status: "sent"
+  }, transaction), {
+    reference,
+    payment_status: "paid",
+    transaction_status: "success",
+    confirmation_email_status: "sent"
+  });
+  assert.deepEqual(paymentVerificationResponse(reference, order, {
+    payment_status: "paid",
+    confirmation_email_status: "pending"
+  }, transaction), {
+    reference,
+    payment_status: "paid",
+    transaction_status: "success",
+    confirmation_email_status: "pending"
+  });
+  assert.deepEqual(paymentVerificationResponse(reference, order, order, {
+    status: "processing"
+  }), {
+    reference,
+    payment_status: "pending",
+    transaction_status: "processing",
+    confirmation_email_status: null
+  });
 });
 
 test("webhook validation authenticates the exact raw body with Paystack HMAC SHA-512", async () => {

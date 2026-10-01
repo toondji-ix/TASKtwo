@@ -50,6 +50,15 @@ export function paymentStatusFromTransaction(transaction) {
   return "pending";
 }
 
+export function paymentVerificationResponse(reference, order, updated, transaction) {
+  return {
+    reference,
+    payment_status: updated?.payment_status || order.payment_status,
+    transaction_status: transaction.status,
+    confirmation_email_status: updated?.confirmation_email_status ?? null
+  };
+}
+
 export function nextPaymentStatus(currentStatus, requestedStatus) {
   if (!["pending", "paid", "failed", "cancelled"].includes(currentStatus)) {
     throw new Error("Unknown current payment state.");

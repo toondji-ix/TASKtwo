@@ -71,6 +71,7 @@ test("only server-verified Paystack transitions dispatch receipts and the server
   }
   assert.match(shared, /order\?\.payment_status === "paid" && order\.id/);
   assert.match(shared, /dispatchOrderConfirmation\(order\.id\)/);
+  assert.match(verify, /paymentVerificationResponse\(reference, order, updated, transaction\)/);
   assert.match(sender, /order\.payment_status !== "paid"/);
   assert.match(sender, /orderConfirmationMessage\(order, claim\.id, domain\)/);
   assert.match(sender, /message\.set\("to", receipt\.to\)/);

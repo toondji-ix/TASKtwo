@@ -3,6 +3,7 @@ import {
   createCheckout, getCheckoutProducts, getProfile, getShoppingState, getUser, hasSession,
   saveShoppingState, signIn, signOut, signUp, startGoogleSignIn, updateProfile, verifyPayment
 } from "./backend.js";
+import { paymentResultContent } from "./checkout-result.js";
 
 const $ = (selector) => document.querySelector(selector);
 const money = (kobo) => new Intl.NumberFormat("en-NG", {
@@ -98,14 +99,19 @@ function renderSignedIn() {
 }
 
 function paymentResult(status, emailStatus = "") {
-  const success = status === "paid";
-  content.innerHTML = `<p class="eyebrow">PAYSTACK CHECKOUT</p><h2>${success ? "Payment confirmed." : "Payment is still being verified."}</h2>
-    <p class="dialog-intro">${success
-      ? "Paystack verified this payment on the server. Your order is safely saved."
-      : "A redirect alone cannot confirm payment. Your order remains pending until Paystack verification succeeds."}</p>
-    ${success && emailStatus !== "sent" ? `<div class="checkout-notice">Your payment is confirmed, but its receipt is queued. Store admin: check the Mailgun function secrets/logs and scheduled retry worker.</div>` : ""}
-    ${!success ? `<button class="dialog-action" type="button" data-verify>Check payment again</button>` : ""}
-    <a class="button button-dark" href="/">Return to the collection</a>`;
+  content.innerHTML = paymentResultContent(status, emailStatus);
+}
+
+async function displayPaymentResult(result) {
+  if (result.payment_status === "paid") {
+    state.cart = [];
+    await persistShopping();
+    sessionStorage.removeItem(PAYMENT_REFERENCE_KEY);
+  } else if (["failed", "cancelled"].includes(result.payment_status)) {
+    sessionStorage.removeItem(PAYMENT_REFERENCE_KEY);
+  }
+  displaySummary();
+  paymentResult(result.payment_status, result.confirmation_email_status);
 }
 
 async function handlePaymentReturn() {
@@ -127,13 +133,7 @@ async function handlePaymentReturn() {
   }
   try {
     const result = await verifyPayment(paymentReference);
-    if (result.payment_status === "paid") {
-      state.cart = [];
-      await persistShopping();
-      sessionStorage.removeItem(PAYMENT_REFERENCE_KEY);
-    }
-    displaySummary();
-    paymentResult(result.payment_status, result.confirmation_email_status);
+    await displayPaymentResult(result);
   } catch (error) {
     paymentResult("pending");
     showError(error.message);
@@ -200,12 +200,7 @@ document.addEventListener("click", async (event) => {
   if (event.target.closest("[data-verify]") && paymentReference) {
     try {
       const result = await verifyPayment(paymentReference);
-      if (result.payment_status === "paid") {
-        state.cart = [];
-        await persistShopping();
-        sessionStorage.removeItem(PAYMENT_REFERENCE_KEY);
-      }
-      paymentResult(result.payment_status, result.confirmation_email_status);
+      await displayPaymentResult(result);
     } catch (error) {
       showError(error.message);
     }

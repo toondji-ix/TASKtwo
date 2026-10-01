@@ -1,6 +1,6 @@
 import { errorResponse, handleOptions, jsonResponse } from "../_shared/http.js";
 import {
-  paymentStatusFromTransaction, transactionMatchesOrder, validateTransaction
+  paymentStatusFromTransaction, paymentVerificationResponse, transactionMatchesOrder, validateTransaction
 } from "../_shared/payment.js";
 import { authenticate, findOrder, paystackVerify, updatePayment } from "../_shared/supabase.js";
 
@@ -27,11 +27,7 @@ Deno.serve(async (request) => {
       return errorResponse(new Error("Paystack has not confirmed payment for this order."), 409);
     }
     const updated = status === "pending" ? order : await updatePayment(reference, status);
-    return jsonResponse({
-      reference,
-      payment_status: updated?.payment_status || order.payment_status,
-      transaction_status: transaction.status
-    });
+    return jsonResponse(paymentVerificationResponse(reference, order, updated, transaction));
   } catch (error) {
     const status = error?.message?.includes("Sign in") ? 401 : 400;
     return errorResponse(error, status);
