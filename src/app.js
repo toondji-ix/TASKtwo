@@ -1,10 +1,11 @@
 import {
-  LEGACY_STORAGE_KEY, PRODUCTS, addToCart, cartCount, cartTotalKobo, loadState,
-  saveState, setCartQuantity, toggleWishlist
+  LEGACY_STORAGE_KEY, PRODUCTS, SHOPPING_OWNER_KEY, addToCart, cartCount, cartTotalKobo,
+  emptyState, loadState, mergeShoppingStates, saveState, setCartQuantity, toggleWishlist
 } from "./store.js";
 import {
-  createCheckout, getOrderByReference, getOrders, getProfile, getUser,
-  hasSession, signIn, signOut, signUp, updateProfile, verifyPayment
+  createCheckout, getOrderByReference, getOrders, getProfile, getShoppingState, getUser,
+  hasSession, saveShoppingState, signIn, signOut, signUp, startGoogleSignIn, updateProfile,
+  verifyPayment
 } from "./backend.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -23,6 +24,7 @@ let toastTimer;
 let accountUser = null;
 let accountProfile = null;
 let accountOrders = [];
+let shoppingSaveQueue = Promise.resolve();
 
 try {
   saveState(window.localStorage, state);
@@ -33,6 +35,28 @@ function persist() {
   saveState(window.localStorage, state);
   window.localStorage.removeItem(LEGACY_STORAGE_KEY);
   renderBadges();
+  if (hasSession()) {
+    const snapshot = structuredClone(state);
+    if (accountUser?.id) window.localStorage.setItem(SHOPPING_OWNER_KEY, accountUser.id);
+    shoppingSaveQueue = shoppingSaveQueue.then(() => saveShoppingState(snapshot)).catch((error) => {
+      showToast(`Your bag is saved on this device, but could not sync to your account. ${error.message}`);
+    });
+  }
+}
+
+async function hydrateCustomerShoppingState() {
+  await shoppingSaveQueue;
+  const [user, saved] = await Promise.all([getUser(), getShoppingState()]);
+  accountUser = user;
+  const owner = window.localStorage.getItem(SHOPPING_OWNER_KEY);
+  state = owner && owner !== user.id
+    ? mergeShoppingStates(saved, emptyState())
+    : owner === user.id ? mergeShoppingStates(saved, emptyState()) : mergeShoppingStates(saved, state);
+  saveState(window.localStorage, state);
+  window.localStorage.setItem(SHOPPING_OWNER_KEY, user.id);
+  if (owner !== user.id) await saveShoppingState(state);
+  renderBadges();
+  renderProducts();
 }
 
 function renderBadges() {
@@ -132,7 +156,7 @@ function accountMarkup(message = "", mode = "signup") {
         <div class="form-field full"><label for="account-password">Password *</label><input id="account-password" name="password" type="password" autocomplete="${signup ? "new-password" : "current-password"}" minlength="8" required></div>
       </div><p class="form-error" id="account-error">${escapeHtml(message)}</p>
       <button class="dialog-action" type="submit">${signup ? "Create account" : "Sign in"}</button>
-      </form><button class="text-action" data-action="auth-mode" data-mode="${signup ? "signin" : "signup"}">${signup ? "I already have an account" : "Create a new account"}</button>
+      </form><button class="dialog-action google-action" data-action="google-signin" type="button">Continue with Google</button><button class="text-action" data-action="auth-mode" data-mode="${signup ? "signin" : "signup"}">${signup ? "I already have an account" : "Create a new account"}</button>
       <p class="form-hint">Use the same email and password that you registered with. If email confirmation is enabled, confirm the link before signing in.</p>`;
   }
   const name = accountProfile?.full_name || accountUser?.email || "there";
@@ -184,15 +208,7 @@ function checkoutMarkup() {
 }
 
 async function openCheckout() {
-  if (!state.cart.length) return openCart();
-  if (!hasSession()) return openAccount("Sign in or create an account before checkout.", "signin");
-  try {
-    [accountUser, accountProfile] = await Promise.all([getUser(), getProfile()]);
-    openDialog(checkoutMarkup());
-    $("#checkout-name").focus();
-  } catch (error) {
-    openDialog(`<p class="eyebrow">CHECKOUT SETUP</p><h2 id="dialog-title">A quick account check is needed.</h2><p class="form-error">${escapeHtml(error.message)}</p><button class="dialog-action" data-action="account-retry">Open account</button>`);
-  }
+  window.location.assign("/checkout");
 }
 
 function paymentLabel(status) {
@@ -284,6 +300,13 @@ document.addEventListener("click", async (event) => {
     if (action === "account") await openAccount();
     if (action === "account-retry") await openAccount();
     if (action === "auth-mode") openDialog(accountMarkup("", button.dataset.mode));
+    if (action === "google-signin") {
+      try {
+        await startGoogleSignIn(window.location.pathname === "/checkout" ? "/checkout" : "/");
+      } catch (error) {
+        openDialog(accountMarkup(error.message, "signin"));
+      }
+    }
     if (action === "track") await openTracking();
     if (action === "wishlist") {
       wishlistOnly = true;
@@ -327,6 +350,7 @@ document.addEventListener("click", async (event) => {
       $("#shop").scrollIntoView({ behavior: "smooth" });
     }
     if (action === "signout") {
+      await shoppingSaveQueue;
       try {
         await signOut();
       } catch (error) {
@@ -335,6 +359,11 @@ document.addEventListener("click", async (event) => {
       accountUser = null;
       accountProfile = null;
       accountOrders = [];
+      state = emptyState();
+      window.localStorage.removeItem(SHOPPING_OWNER_KEY);
+      saveState(window.localStorage, state);
+      renderBadges();
+      renderProducts();
       await openAccount();
     }
     if (action === "track-order" && id) await openTracking(id);
@@ -360,6 +389,7 @@ document.addEventListener("submit", async (event) => {
       if (mode === "signup") {
         const result = await signUp(String(form.get("email")).trim(), String(form.get("password")), String(form.get("name")).trim());
         if (result.access_token) {
+          await hydrateCustomerShoppingState();
           await openAccount();
           showToast("Your Supabase account is ready.");
         } else {
@@ -367,6 +397,7 @@ document.addEventListener("submit", async (event) => {
         }
       } else {
         await signIn(String(form.get("email")).trim(), String(form.get("password")));
+        await hydrateCustomerShoppingState();
         await openAccount();
         showToast("You’re signed in.");
       }
@@ -442,3 +473,6 @@ $("#year").textContent = new Date().getFullYear();
 renderBadges();
 renderProducts();
 handlePaymentReturn();
+if (hasSession()) hydrateCustomerShoppingState().catch((error) => {
+  showToast(`Your account bag could not be loaded. ${error.message}`);
+});

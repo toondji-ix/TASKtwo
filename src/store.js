@@ -11,9 +11,24 @@ export const PRODUCTS = [
 
 export const STORAGE_KEY = "atelier-june-shopping-v1";
 export const LEGACY_STORAGE_KEY = "atelier-june-demo-v1";
+export const SHOPPING_OWNER_KEY = "atelier-june-shopping-owner-v1";
 
 export function emptyState() {
   return { cart: [], wishlist: [] };
+}
+
+export function mergeShoppingStates(primary, secondary) {
+  const cart = new Map();
+  for (const item of [...(primary?.cart || []), ...(secondary?.cart || [])]) {
+    if (!PRODUCTS.some((product) => product.id === item.productId)) continue;
+    cart.set(item.productId, Math.min(20, (cart.get(item.productId) || 0) + item.quantity));
+  }
+  const validIds = new Set(PRODUCTS.map((product) => product.id));
+  return {
+    cart: [...cart].map(([productId, quantity]) => ({ productId, quantity })),
+    wishlist: [...new Set([...(primary?.wishlist || []), ...(secondary?.wishlist || [])])]
+      .filter((id) => validIds.has(id))
+  };
 }
 
 export function loadState(storage) {

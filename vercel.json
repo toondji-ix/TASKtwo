@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/checkout", "destination": "/checkout.html" },
+    { "source": "/auth/callback", "destination": "/auth-callback.html" }
+  ]
+}

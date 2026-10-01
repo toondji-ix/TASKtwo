@@ -5,6 +5,7 @@ import {
   nextPaymentStatus, paymentStatusFromTransaction, transactionMatchesOrder,
   validateCart, validateTransaction, verifyWebhookSignature
 } from "../supabase/functions/_shared/payment.js";
+import { orderConfirmationMessage } from "../supabase/functions/_shared/mailgun.js";
 
 const products = [
   { id: "pouch", name: "Pouch", price_kobo: 11500000 },
@@ -63,4 +64,30 @@ test("webhook validation authenticates the exact raw body with Paystack HMAC SHA
   assert.equal(await verifyWebhookSignature(`${body} `, signature, secret), false);
   assert.equal(await verifyWebhookSignature(body, "invalid", secret), false);
   assert.equal(await verifyWebhookSignature(body, signature, ""), false);
+});
+
+test("order receipt accepts only paid database orders and has stable owner-derived delivery data", () => {
+  const order = {
+    payment_status: "paid",
+    user_id: "customer-uuid",
+    email: "owner@example.test",
+    customer_name: "<June>",
+    reference: "AJ-reference",
+    amount_kobo: 7550000,
+    delivery_address: "12 Main St",
+    delivery_city: "Lagos",
+    delivery_postal_code: "100001",
+    delivery_country: "Nigeria",
+    order_items: [{ product_name: "<Bag>", quantity: 1, unit_price_kobo: 7550000 }]
+  };
+  const first = orderConfirmationMessage(order, "outbox-uuid", "mg.example.test");
+  const retry = orderConfirmationMessage(order, "outbox-uuid", "mg.example.test");
+  assert.equal(first.to, order.email);
+  assert.equal(first.messageId, retry.messageId);
+  assert.match(first.messageId, /outbox-uuid@mg\.example\.test/);
+  assert.match(first.html, /&lt;June&gt;/);
+  assert.match(first.html, /&lt;Bag&gt;/);
+  assert.match(first.text, /AJ-reference/);
+  assert.throws(() => orderConfirmationMessage({ ...order, payment_status: "pending" }, "outbox-uuid", "mg.example.test"), /confirmed paid order/);
+  assert.throws(() => orderConfirmationMessage({ ...order, email: "" }, "outbox-uuid", "mg.example.test"), /saved customer email/);
 });

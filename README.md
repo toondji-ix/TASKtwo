@@ -1,64 +1,73 @@
-# Atelier June — Supabase and Paystack storefront
+# Atelier June storefront
 
-A responsive accessories storefront with a dependency-free static Node.js UI/server, Supabase Auth and Postgres, and secure Paystack test-mode checkout. Prices are displayed in Nigerian naira (NGN); database and payment amounts are integer kobo. Shipping/fulfilment is not connected.
+Atelier June is a responsive static storefront using Supabase Auth/Postgres/Edge Functions and Paystack hosted checkout. Supabase is the source of truth for signed-in customer profiles, carts, wishlists, orders, and payment state. Prices are integer kobo. Shipping/fulfilment is not connected.
 
-## Requirements
+## Run locally
 
-- Node.js 18 or newer
-- A Supabase project (or the Supabase CLI and Docker for local emulation)
-- A Paystack account with **Test Mode** enabled for sandbox payments
-
-## Run the storefront
+Requires Node.js 18+. Start the dependency-free static server:
 
 ```powershell
 npm run start
 ```
 
-Open <http://127.0.0.1:4173>. To select another port, set `$env:PORT` before starting. The server only serves static files; it does not contain provider credentials or implement a payment backend.
+Open `http://127.0.0.1:4173`. The local server explicitly maps `/checkout` to `checkout.html` and `/auth/callback` to `auth-callback.html`. Deployments use the equivalent rewrites in `vercel.json`. The email/OAuth/payment services still require your own provider configuration.
 
-The bag and wishlist remain local shopping conveniences. Customer accounts, profile details, orders, and payment status are fetched from Supabase; legacy locally simulated accounts/orders are discarded when the app starts.
+## Browser configuration
 
-## Public browser configuration
-
-Set only your project URL and Supabase publishable/anon key in `src/config.js`:
+Set only the Supabase project URL and **publishable/anon** key in `src/config.js`:
 
 ```js
 export const SUPABASE_URL = "https://your-project-ref.supabase.co";
 export const SUPABASE_ANON_KEY = "your-public-publishable-or-anon-key";
 ```
 
-These two values are public browser configuration. **Never put a Supabase service-role/secret key or any Paystack secret key in `src/config.js`, HTML, browser storage, or a checked-in file.** The app intentionally reports an actionable setup error rather than using a demo account or pretending a payment succeeded.
+These are public browser values. Never put a Supabase service-role/secret key, Paystack secret, Mailgun API key, SMTP password, or Google OAuth client secret in browser code, HTML, local storage, or a checked-in file. `.env` and `.env.*` files are ignored; keep existing local secret files private and unmodified.
 
-## Database and authentication setup
+## Additive Supabase migrations
 
-1. Install the [Supabase CLI](https://supabase.com/docs/guides/cli) and authenticate with your own project.
-2. Link the project and apply the SQL migration:
-
-   ```powershell
-   supabase login
-   supabase link --project-ref your-project-ref
-   supabase db push
-   ```
-
-   The migration creates the seeded NGN catalog, customer profiles, order/payment records and line items. Row Level Security restricts profiles and orders to their owner. Customers can update only their profile; they cannot create orders, edit order items, or change payment status.
-
-   If you are not using the Supabase CLI, open **Dashboard → SQL Editor**, create a new query, paste the complete contents of `supabase/migrations/20260930000000_commerce.sql`, and run it once against this project. The storefront requires all four migration tables (`profiles`, `products`, `orders`, and `order_items`); confirming an email creates the Auth user but does not apply this database migration. If the tables already exist but PostgREST still reports a schema-cache error, run `notify pgrst, 'reload schema';` in the SQL Editor and retry.
-
-3. In the Supabase dashboard, configure Auth email/password sign-up and the email confirmation and site/redirect URLs you want. Add your storefront origin (for local use, `http://127.0.0.1:4173`) to the Auth redirect allow list. The profile trigger creates a profile at sign-up. Users must sign in and complete their delivery details before checking out.
-
-   If an account created before the commerce migration signs in but reports that its profile is missing, apply `supabase/migrations/20260930000001_backfill_customer_profiles.sql` in the SQL Editor. This safely creates profiles only for existing Auth users whose profile row is absent; it can be run more than once. Then sign out and sign back in. If the profile is still unavailable, verify the profile trigger and owner-scoped profile policies from the commerce migration.
-
-## Paystack Edge Functions and secrets
-
-The deployable functions are `create-checkout`, `verify-payment`, and `paystack-webhook`. Checkout authenticates the Supabase user, loads their saved profile and server-side catalog, accepts only product IDs and quantities, creates a pending order, and initializes a Paystack transaction in NGN. The browser never supplies a price, email, address snapshot, order ID, or paid flag to checkout. Payment confirmation calls Paystack's verify API and checks reference, exact kobo amount and currency before an idempotent database transition. The webhook validates Paystack's HMAC-SHA-512 signature over the exact raw body and independently verifies the transaction with Paystack before applying the same checks and transition. An unauthenticated redirect alone never marks an order paid.
-
-Set the function secrets through the Supabase CLI in your own secure shell (do not commit them or paste them into this repository):
+Link the existing project and apply all pending migrations without resetting or dropping production data:
 
 ```powershell
-supabase secrets set PAYSTACK_SECRET_KEY=sk_test_your_own_test_secret SITE_URL=http://127.0.0.1:4173
+supabase login
+supabase link --project-ref your-project-ref
+supabase db push
 ```
 
-Use your **test** secret key, never the live key. Supabase provides `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` to deployed functions; the service-role key remains function-side only. Keep the Paystack secret in Supabase Function Secrets only. For production-like hosting, set `SITE_URL` to the exact HTTPS origin/base URL used by your storefront. The current callback appends `/?payment=return`.
+The original commerce migrations create the catalog, profiles, orders, and order items. The additive migration `supabase/migrations/20261001000000_customer_shopping_and_order_email.sql` adds:
+
+- Owner-scoped `customer_cart` and `customer_wishlist` tables and an authenticated, own-user-only atomic sync RPC. Existing browser-only carts/wishlists are merged into the first account used on that browser; subsequent visits load that account's database state. A different account never inherits the previous account's local state.
+- A private order-confirmation outbox with a unique order constraint. A database trigger inserts exactly one outbox row on the first verified transition to `paid`. The public client cannot access it. Only trusted functions can claim/retry/complete queued email.
+
+The migration is repeatable/additive and does not require `supabase db reset`. If PostgREST reports a missing table or stale schema, check the migration history and run `notify pgrst, 'reload schema';` in the SQL Editor. Existing account profiles can be safely backfilled with `supabase/migrations/20260930000001_backfill_customer_profiles.sql`.
+
+RLS limits profile, order, cart, and wishlist access to `auth.uid()`. Customers cannot create or alter orders or payment status. Checkout accepts only product IDs and quantities; the Edge Function re-reads active product prices and the signed-in profile from Supabase before calculating NGN totals and initializing Paystack.
+
+## Supabase Auth: signup verification email and Google
+
+In **Supabase Dashboard → Authentication → URL Configuration**:
+
+- Set **Site URL** to the production storefront origin, e.g. `https://shop.example.com`.
+- Add redirect URLs for `http://127.0.0.1:4173/auth/callback`, `http://localhost:4173/auth/callback`, `https://shop.example.com/auth/callback`, and any exact Vercel preview origins you use. Supabase requires each callback origin/path to be on its redirect allow-list.
+- The application returns to `/checkout` after checkout sign-in and `/` after storefront signup/Google sign-in. The callback performs a PKCE code exchange and never accepts a browser-supplied paid state.
+
+### Configure Google Cloud Console
+
+1. Create/select a Google Cloud project and configure the OAuth consent screen (app name, support email, authorized domains, and testing/publishing audience as appropriate).
+2. Create an OAuth **Web application** client. Add your storefront origins (`http://127.0.0.1:4173`, `http://localhost:4173`, and the production/preview origins) as authorized JavaScript origins where required.
+3. Add this exact **Authorized redirect URI** to the Google client: `https://your-project-ref.supabase.co/auth/v1/callback`. This is the Supabase Auth callback, not the storefront `/auth/callback`.
+4. In **Supabase Dashboard → Authentication → Sign In / Providers → Google**, enable Google and enter the Google client ID and client secret. Keep the secret in the provider configuration only. Never add it to `src/config.js`.
+5. Add the storefront `/auth/callback` URLs above to Supabase's Auth redirect allow-list. Test Google sign-in in an allowed browser origin; the app exchanges the returned authorization code with PKCE.
+
+### Configure Mailgun custom SMTP for signup/verification
+
+1. Add a sending domain to Mailgun; verify DNS including SPF and DKIM, and complete any domain/account verification needed for your recipient region.
+2. In Mailgun, create/use the domain's SMTP credentials (the SMTP password is not the Mailgun HTTP API key).
+3. In **Supabase Dashboard → Project Settings → Authentication → SMTP Settings** (Dashboard wording may appear under Auth → SMTP Settings), enable custom SMTP and set host `smtp.mailgun.org`, port `587`, username `postmaster@your-mailgun-domain`, that domain's SMTP password, and a verified sender such as `Atelier June <orders@your-mailgun-domain>`. Set the sender name/address to match the verified domain. Never store this SMTP password in this repository.
+4. In **Authentication → Email Templates**, review the confirmation template and keep its confirmation action URL intact. The app starts email signup with a PKCE verifier and returns a successful confirmation link to `/auth/callback`; an expired or invalid link displays an actionable message.
+
+Supabase Auth sends signup/password-confirmation mail through its configured custom SMTP. The Edge Function API key described below is separate and is only for paid-order receipts.
+
+## Paystack test checkout and order receipts
 
 Deploy the functions:
 
@@ -66,45 +75,81 @@ Deploy the functions:
 supabase functions deploy create-checkout
 supabase functions deploy verify-payment
 supabase functions deploy paystack-webhook
+supabase functions deploy send-order-confirmation
 ```
 
-If checkout displays **Failed to fetch** or reports that the function was not found, confirm that the CLI is linked to the same project URL as `src/config.js`, set `PAYSTACK_SECRET_KEY` and `SITE_URL` in that project, deploy `create-checkout`, and reload the storefront. Function invocations must be available from the browser origin; the function includes the required CORS handling.
+Set secrets in the linked Supabase project from a private shell; use Paystack **Test Mode** credentials during sandbox testing:
 
-In Paystack Dashboard, stay in **Test Mode** and configure the webhook URL:
+```powershell
+supabase secrets set PAYSTACK_SECRET_KEY=sk_test_your_test_key SITE_URL=https://shop.example.com MAILGUN_API_KEY=your_private_mailgun_api_key MAILGUN_DOMAIN=mg.example.com MAILGUN_FROM="Atelier June <orders@mg.example.com>" ORDER_EMAIL_INTERNAL_SECRET=use-a-long-random-secret
+```
+
+`SITE_URL` must be the storefront origin (local development: `http://127.0.0.1:4173`). Supabase supplies function-side `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`; do not copy the service-role key into the browser. `MAILGUN_API_BASE` is optional and defaults to `https://api.mailgun.net`; set it to `https://api.eu.mailgun.net` only for an EU Mailgun account. Only those two exact HTTPS Mailgun API hosts are accepted.
+
+In Paystack **Test Mode → Settings → API Keys & Webhooks**, set the webhook URL to:
 
 ```text
 https://your-project-ref.supabase.co/functions/v1/paystack-webhook
 ```
 
-Paystack signs webhook messages with the same test secret key stored as `PAYSTACK_SECRET_KEY`. Do not expose the endpoint by disabling its signature verification. The app manually validates user JWTs in the two customer functions; the webhook is intentionally unauthenticated at the HTTP layer and requires a valid Paystack signature plus server verification.
+The redirect return goes to `/checkout?payment=return`. `verify-payment` and the webhook both verify the transaction with Paystack and compare exact reference, NGN currency, and kobo amount before calling the database state transition. Neither the redirect query nor browser totals can mark an order paid. The database transition atomically writes a unique receipt-outbox record; concurrent webhook/redirect processing cannot enqueue or claim a second confirmation while the first is sending. A Mailgun error returns the outbox row to `pending` with a bounded exponential retry time; a locked `processing` message is eligible for recovery after its five-minute lease expires. The stable message ID is derived from the unique outbox row.
 
-## Local Supabase emulation
+### Schedule durable outbox retries
 
-Install and start the Supabase CLI's local stack (Docker must be running). Create a local-only ignored `supabase/.env.local` containing your test-only `PAYSTACK_SECRET_KEY` and `SITE_URL=http://127.0.0.1:4173`, then serve the functions with it:
+Immediate delivery is attempted after a successful verification/webhook. To retry transient Mailgun failures when no new checkout request arrives, enable the `pg_cron`, `pg_net`, and Vault extensions in **Database → Extensions**. Store the *same* long random internal secret used for `ORDER_EMAIL_INTERNAL_SECRET` in Supabase Vault (SQL Editor; replace the placeholder locally and do not commit it):
 
-```powershell
-supabase start
-supabase db reset
-supabase functions serve --env-file supabase/.env.local
+```sql
+select vault.create_secret('PASTE_THE_RANDOM_INTERNAL_SECRET', 'ORDER_EMAIL_INTERNAL_SECRET');
 ```
 
-The `.env.local` file is ignored by Git; do not commit it. Copy only the local API URL and anon/publishable key from `supabase status` into `src/config.js`; never copy its service-role key into browser code. Paystack's hosted webhook cannot call a loopback URL; use a secure public HTTPS tunnel to the local webhook only if you want to test local webhook delivery, or test webhooks against your deployed Supabase test project.
+Schedule one worker request every five minutes (replace the project ref):
 
-## Sandbox checkout smoke test
+```sql
+select cron.schedule(
+  'atelier-june-order-confirmation-retries',
+  '*/5 * * * *',
+  $$
+    select net.http_post(
+      url := 'https://your-project-ref.supabase.co/functions/v1/send-order-confirmation',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'x-internal-secret',
+        (select decrypted_secret from vault.decrypted_secrets where name = 'ORDER_EMAIL_INTERNAL_SECRET' limit 1)
+      ),
+      body := '{}'::jsonb
+    );
+  $$
+);
+```
 
-1. Confirm the browser config contains the correct Supabase URL and public key; deploy the migration and three functions; set test secrets; and enable Supabase email/password auth. Start the storefront and create an account using a reachable email. Confirm it if email confirmation is enabled, then sign in.
-2. Save a complete name and delivery address under **Account**. Add a product and choose **Continue to checkout**. Verify the displayed NGN price and delivery estimate. Submit checkout and confirm that only the Paystack-hosted test checkout page requests card details.
-3. Use a Paystack Test Mode card from the official [test payments guide](https://paystack.com/docs/payments/test-payments/), such as `4084 0840 8408 4081` with a future expiry, CVV `408`, and the test OTP shown in that guide. Sandbox test values can vary by scenario; use the current provider guide if a scenario requires different details. Do not use a real card.
-4. Confirm the return screen says **Payment confirmed** only after server verification; open **Account** and verify the order reference, total, and payment state. Use **Order tracking** to retrieve that same authenticated order. Check the Paystack test dashboard and configured webhook delivery.
-5. Repeat with a failed/cancelled test attempt. Confirm that it does not show a paid status, the cart remains available for retry, and a redirect without server verification never creates a success state. Test signing out and confirm that order references are not visible to another signed-out account.
+The worker reads only paid orders from the outbox; it ignores all browser-supplied recipient/content fields. Inspect `order_confirmation_outbox` in the SQL Editor (never grant it to browser roles) for `pending`, `processing`, `sent`, attempts, and the last provider error. Missing Mailgun settings leave receipt delivery explicitly pending and are reported in Edge Function logs. A timeout after Mailgun accepts a message is inherently ambiguous for an external email API; the durable outbox guarantees one concurrent sender/one unique receipt job and retries uncertain failures at least once.
 
-No provider credentials or project access are included here. A real Supabase/Paystack-connected run cannot be claimed until you configure your own projects and complete these steps.
+## Vercel and local routes
 
-## Checks
+Deploy the repository as a static Vercel project with no build command or output directory. `vercel.json` rewrites `/checkout` to `checkout.html` and `/auth/callback` to `auth-callback.html`; query strings continue through those rewrites. The local `server.js` provides the same route mapping. Set the Supabase Site URL/redirect allow-list and `SITE_URL` to the exact deployed origin, including HTTPS in production. Do not configure a serverless function with public secrets; all trusted operations run in Supabase Edge Functions.
+
+## Sandbox/manual checklist
+
+1. Use an isolated Supabase project and test Paystack keys; apply migrations with `supabase db push`, deploy all four functions, set the function secrets, and configure the Mailgun sending domain/custom SMTP and scheduled outbox retry job.
+2. Add the local origin to Supabase Auth redirects. Create an account and confirm its signup email arrived via Mailgun SMTP; verify that the confirmation link returns through `/auth/callback` and creates a session. Test Google login with the Google test client.
+3. Add products while signed out, sign in, reload, and verify the same bag/wishlist survives. Sign out, use a different account, and verify it never sees the first account's items. Try direct REST reads/writes using another user's JWT and confirm RLS denies them.
+4. Complete a profile and open `/checkout` at desktop and mobile widths. Check persisted line items, database catalog amounts in NGN, delivery fee, required profile fields, and sign-in gating.
+5. Use a Paystack test card from the current [Paystack test payments guide](https://paystack.com/docs/payments/test-payments/). Confirm only the hosted Paystack page handles card details; a return redirect must remain pending until the server verifies it.
+6. Confirm the paid order appears in the owning account, and exactly one outbox row is created and emailed to that order's Auth email. Trigger both webhook and browser verification for the same reference; the status should stay paid and only one outbox row/email should exist. Test failed/cancelled attempts and ensure the order is never reported paid.
+7. Temporarily use an invalid Mailgun key/domain and check that payment stays confirmed while the receipt remains pending with an attempt/error; restore the secret and verify scheduled/manual retry sends it and marks it sent. Never use a real card or live credentials for this procedure.
+
+Provider-side Google, Supabase, Mailgun, and Paystack tests/deployments require your account configuration and have not been performed here.
+
+## Automated checks
 
 ```powershell
 npm test
 npm run check
 ```
 
-The Node built-in tests cover kobo arithmetic, cart validation, exact transaction amount/currency/reference checks, webhook HMAC validation, and idempotent/non-downgrading payment-state behavior. `npm run check` includes client/server syntax checks and the tests. Deno and the Supabase CLI are not required project dependencies; when available, run `deno check supabase/functions/create-checkout/index.ts supabase/functions/verify-payment/index.ts supabase/functions/paystack-webhook/index.ts` and `supabase db lint` against your local stack. Complete the sandbox smoke test above against your own credentials before accepting test payments.
+The built-in Node tests check the local-cart merge, authenticated Supabase shopping-state RPC contract, PKCE callback exchange, owner-only RLS/schema constraints, payment verification invariants, unique paid-order outbox, and retry behavior. If installed, also run:
+
+```powershell
+deno check supabase/functions/create-checkout/index.ts supabase/functions/verify-payment/index.ts supabase/functions/paystack-webhook/index.ts supabase/functions/send-order-confirmation/index.ts
+supabase db lint
+```

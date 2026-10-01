@@ -77,7 +77,7 @@ Deno.serve(async (request) => {
         amount: amountKobo,
         currency: "NGN",
         reference,
-        callback_url: `${siteUrl}/?payment=return`,
+        callback_url: `${siteUrl}/checkout?payment=return`,
         metadata: { order_id: order.id }
       })
     });

@@ -18,9 +18,16 @@ createServer(async (request, response) => {
     return;
   }
   const pathname = new URL(request.url, "http://localhost").pathname;
+  const routeFiles = {
+    "/checkout": "/checkout.html",
+    "/checkout/": "/checkout.html",
+    "/auth/callback": "/auth-callback.html",
+    "/auth/callback/": "/auth-callback.html"
+  };
+  const servedPath = routeFiles[pathname] || pathname;
   let requestedPath;
   try {
-    requestedPath = decodeURIComponent(pathname);
+    requestedPath = decodeURIComponent(servedPath);
   } catch {
     response.writeHead(400).end("Bad request");
     return;

@@ -1,0 +1,10 @@
+{
+  "goal_id": "checkout-email-google-auth",
+  "status": "building",
+  "iteration": 1,
+  "builder_model": "GPT:5.6-Luna",
+  "inspector_model": "GPT:5.6-Sol",
+  "initial_sha": "85ac834ed06c2fb777522de3b535682365cce395",
+  "created_at": "2026-10-01T21:05:58.883+01:00",
+  "history": []
+}

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   LEGACY_STORAGE_KEY, PRODUCTS, STORAGE_KEY, addToCart, cartCount, cartTotalKobo,
-  emptyState, loadState, saveState, setCartQuantity, toggleWishlist
+  emptyState, loadState, mergeShoppingStates, saveState, setCartQuantity, toggleWishlist
 } from "../src/store.js";
 
 function memoryStorage(value = null, legacyValue = null) {
@@ -78,9 +78,20 @@ test("legacy browser demo state retains the cart but never restores local accoun
     orders: [{ id: "AJ-FAKE", payment_status: "paid" }],
     currentEmail: "owner@example.com"
   });
+
   const migrated = loadState(memoryStorage(null, legacy));
   assert.deepEqual(migrated, {
     cart: [{ productId: "arc-bag", quantity: 2 }],
     wishlist: ["soft-chain"]
+  });
+});
+
+test("first-account migration merges guest shopping state without exceeding quantity limits", () => {
+  assert.deepEqual(mergeShoppingStates(
+    { cart: [{ productId: "arc-bag", quantity: 8 }], wishlist: ["soft-chain"] },
+    { cart: [{ productId: "arc-bag", quantity: 19 }, { productId: "wide-frame", quantity: 1 }], wishlist: ["soft-chain", "pearl-studs"] }
+  ), {
+    cart: [{ productId: "arc-bag", quantity: 20 }, { productId: "wide-frame", quantity: 1 }],
+    wishlist: ["soft-chain", "pearl-studs"]
   });
 });
