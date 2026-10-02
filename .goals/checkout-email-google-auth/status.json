@@ -1,7 +1,7 @@
 {
   "goal_id": "checkout-email-google-auth",
-  "status": "building",
-  "iteration": 1,
+  "status": "inspecting",
+  "iteration": 2,
   "builder_model": "GPT:5.6-Luna",
   "inspector_model": "GPT:5.6-Sol",
   "initial_sha": "85ac834ed06c2fb777522de3b535682365cce395",
