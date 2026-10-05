@@ -39,6 +39,11 @@ test("additive shopping migration stores carts and wishlists with owner-only RLS
   assert.match(migration, /delete from public\.customer_cart where user_id = customer_id/i);
   assert.match(migration, /delete from public\.customer_wishlist where user_id = customer_id/i);
   assert.match(migration, /grant execute on function public\.replace_customer_shopping_state\(jsonb, jsonb\) to authenticated/i);
+  const realtimeMigration = readFileSync(new URL("../supabase/migrations/20261005000000_customer_cart_realtime.sql", import.meta.url), "utf8");
+  assert.match(realtimeMigration, /alter publication supabase_realtime add table public\.customer_cart/i);
+  assert.match(realtimeMigration, /tablename = 'customer_cart'/i);
+  assert.match(realtimeMigration, /alter publication supabase_realtime add table public\.customer_wishlist/i);
+  assert.match(realtimeMigration, /tablename = 'customer_wishlist'/i);
 });
 
 test("paid-order outbox is unique, database-triggered, service-only, and retries failed sends", () => {

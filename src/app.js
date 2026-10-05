@@ -7,6 +7,7 @@ import {
   hasSession, saveShoppingState, signIn, signOut, signUp, startGoogleSignIn, updateProfile,
   verifyPayment
 } from "./backend.js";
+import { subscribeToCustomerCart } from "./realtime.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const money = (kobo) => new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(kobo / 100);
@@ -25,6 +26,44 @@ let accountUser = null;
 let accountProfile = null;
 let accountOrders = [];
 let shoppingSaveQueue = Promise.resolve();
+let cartRealtimeCleanup = null;
+let cartRefreshTimer;
+
+function stopCustomerCartSubscription() {
+  clearTimeout(cartRefreshTimer);
+  cartRealtimeCleanup?.();
+  cartRealtimeCleanup = null;
+}
+
+function startCustomerCartSubscription(userId) {
+  stopCustomerCartSubscription();
+  subscribeToCustomerCart(userId, () => {
+    clearTimeout(cartRefreshTimer);
+    cartRefreshTimer = setTimeout(async () => {
+      if (accountUser?.id !== userId) return;
+      try {
+        const saved = await getShoppingState();
+        if (accountUser?.id !== userId) return;
+        state = { ...state, cart: saved.cart };
+        saveState(window.localStorage, state);
+        renderBadges();
+        renderProducts();
+        if (overlay.dataset.dialog === "cart") openCart();
+      } catch (error) {
+        showToast(`Your bag could not be refreshed from your account. ${error.message}`);
+      }
+    }, 80);
+  }, (error) => {
+    showToast(`Live bag sync disconnected. ${error.message}`);
+  })
+    .then((cleanup) => {
+      if (accountUser?.id === userId) cartRealtimeCleanup = cleanup;
+      else cleanup();
+    })
+    .catch((error) => {
+      showToast(`Live bag sync could not start. ${error.message}`);
+    });
+}
 
 try {
   saveState(window.localStorage, state);
@@ -55,6 +94,7 @@ async function hydrateCustomerShoppingState() {
   saveState(window.localStorage, state);
   window.localStorage.setItem(SHOPPING_OWNER_KEY, user.id);
   if (owner !== user.id) await saveShoppingState(state);
+  startCustomerCartSubscription(user.id);
   renderBadges();
   renderProducts();
 }
@@ -101,6 +141,7 @@ function showToast(message) {
 }
 
 function openDialog(markup) {
+  delete overlay.dataset.dialog;
   content.innerHTML = markup;
   overlay.hidden = false;
   document.body.style.overflow = "hidden";
@@ -143,6 +184,7 @@ function cartMarkup() {
 
 function openCart() {
   openDialog(cartMarkup());
+  overlay.dataset.dialog = "cart";
 }
 
 function accountMarkup(message = "", mode = "signup") {
@@ -351,6 +393,7 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "signout") {
       await shoppingSaveQueue;
+      stopCustomerCartSubscription();
       try {
         await signOut();
       } catch (error) {

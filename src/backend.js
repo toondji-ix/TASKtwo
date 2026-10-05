@@ -201,6 +201,10 @@ export async function getUser() {
   return request("/auth/v1/user", { token });
 }
 
+export function getAccessToken() {
+  return currentToken();
+}
+
 export async function getProfile() {
   const token = await currentToken();
   const rows = await request("/rest/v1/profiles?select=id,full_name,address,city,postal_code,country", { token });
