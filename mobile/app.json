@@ -31,6 +31,13 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "cee388b6-ab49-4a9e-94c9-0bdd29ae0289"
+      }
+    },
+    "owner": "morebymafe"
   }
 }
